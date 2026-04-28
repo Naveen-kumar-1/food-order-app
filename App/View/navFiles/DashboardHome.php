@@ -6,7 +6,10 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
-$app = dirname(dirname(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/'))));
+$script = (string) ($_SERVER['SCRIPT_NAME'] ?? '/');
+// Works whether this file is included (Dashboard.php) or fetched directly (navFiles/*.php)
+$pos = strpos($script, '/App/View/');
+$app = $pos !== false ? substr($script, 0, $pos) : dirname($script);
 $app = $app === '/' || $app === '\\' ? '' : rtrim($app, '/');
 $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
 ?>

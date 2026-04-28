@@ -6,7 +6,9 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
-$app = dirname(dirname(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/'))));
+$script = (string) ($_SERVER['SCRIPT_NAME'] ?? '/');
+$pos = strpos($script, '/App/View/');
+$app = $pos !== false ? substr($script, 0, $pos) : dirname($script);
 $app = $app === '/' || $app === '\\' ? '' : rtrim($app, '/');
 $timeSlotsApi = ($app !== '' ? $app : '') . '/App/Controller/TimeSlotsController.php';
 ?>
