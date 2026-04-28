@@ -266,6 +266,36 @@ class Orders
         return $rows;
     }
 
+    /** @return array<int, array<string,mixed>> */
+    public static function listByIdsForTable($conn, int $shopId, int $tableId, array $orderIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $orderIds), fn($v) => $v > 0)));
+        if (count($ids) === 0) return [];
+        // Keep query size bounded
+        $ids = array_slice($ids, 0, 100);
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $types = 'ii' . str_repeat('i', count($ids));
+        $sql = "SELECT id, shop_id, table_id, status, total_amount, created_at, updated_at
+                FROM orders
+                WHERE shop_id = ?
+                  AND table_id = ?
+                  AND id IN ($placeholders)
+                ORDER BY id DESC";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) return [];
+
+        $params = [$types, $shopId, $tableId];
+        foreach ($ids as $k => $v) $params[] = &$ids[$k];
+        $stmt->bind_param(...$params);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $rows = [];
+        while ($res && ($row = $res->fetch_assoc())) $rows[] = $row;
+        $stmt->close();
+        return $rows;
+    }
+
     public static function deleteOrder($conn, int $shopId, int $orderId): bool
     {
         // Ensure belongs to shop

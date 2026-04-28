@@ -10,6 +10,7 @@ if (empty($_SESSION['user_id'])) {
 $app = dirname($_SERVER['SCRIPT_NAME'] ?? '/');
 $app = $app === '/' || $app === '\\' ? '' : rtrim($app, '/');
 $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
+$pagerJs = ($app !== '' ? $app : '') . '/Assets/Js/pagination.js';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -18,6 +19,7 @@ $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kitchen Dashboard</title>
   <link rel="stylesheet" href="<?php echo htmlspecialchars(($app !== '' ? $app : '') . '/Assets/Css/main.css', ENT_QUOTES, 'UTF-8'); ?>">
+  <script src="<?php echo htmlspecialchars($pagerJs, ENT_QUOTES, 'UTF-8'); ?>"></script>
   <style>
     .k-shell { max-width: 1100px; margin: 0 auto; padding: 18px; }
     .k-toolbar { display:flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -38,17 +40,22 @@ $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
       <div class="dash-title">Incoming orders</div>
       <div class="dash-sub">Update statuses: Pending → Preparing → Completed → Served</div>
     </div>
-    <div style="display:flex; gap: 10px; align-items:center;">
+    <div style="display:flex; gap: 10px; align-items:center; flex-wrap: wrap; justify-content: flex-end;">
+      <div class="input-wrap" style="min-width: 220px;">
+        <span class="input-icon">📅</span>
+        <input class="input" type="date" id="kDate" />
+      </div>
       <button class="btn-soft" type="button" id="refreshBtn">Refresh</button>
       <label class="toggle" style="margin:0;">
         <input type="checkbox" id="autoRefresh" checked />
         <span class="toggle__track" aria-hidden="true"><span class="toggle__thumb"></span></span>
-        <span>Auto refresh (7s)</span>
+        <span>Auto refresh (12s)</span>
       </label>
     </div>
   </div>
 
   <div id="kList" class="k-cards"></div>
+  <div id="kPager" style="margin-top: 12px;"></div>
 </div>
 
 <div class="modal" id="kPopup" aria-hidden="true">
@@ -70,8 +77,15 @@ $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
 (() => {
   const api = <?php echo json_encode($ordersApi, JSON_UNESCAPED_SLASHES); ?>;
   const el = document.getElementById('kList');
+  const pagerEl = document.getElementById('kPager');
+  const dateEl = document.getElementById('kDate');
   const fmt = (n) => '₹' + Number(n).toFixed(2).replace(/\\.00$/, '');
   const pillClass = (s) => s === 'Served' ? 'pill--green' : (s === 'Completed' ? 'pill--green' : (s === 'Preparing' ? 'pill--amber' : ''));
+
+  const state = { page: 1, perPage: 10, total: 0, date: '' };
+  const todayStr = () => new Date().toISOString().slice(0, 10);
+  state.date = todayStr();
+  if (dateEl) dateEl.value = state.date;
 
   const popEl = document.getElementById('kPopup');
   const popTitle = document.getElementById('kPopupTitle');
@@ -101,7 +115,14 @@ $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
 
   const load = async () => {
     if (!el) return;
-    const res = await fetch(`${api}?action=list&per_page=50&include_items=1`, { credentials: 'same-origin', cache: 'no-store' });
+    const qs = new URLSearchParams();
+    qs.set('action', 'list');
+    qs.set('include_items', '1');
+    qs.set('page', String(state.page));
+    qs.set('per_page', String(state.perPage));
+    if (state.date) qs.set('date', state.date);
+
+    const res = await fetch(`${api}?${qs.toString()}`, { credentials: 'same-origin', cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) {
       el.innerHTML = `<div class="products-empty">Failed to load orders.</div>`;
@@ -109,8 +130,20 @@ $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
     }
     const rows = data.orders || [];
     const itemsByOrder = data.itemsByOrder || {};
+    state.total = Number(data?.pagination?.total || 0);
+    state.page = Number(data?.pagination?.page || state.page) || state.page;
+    state.perPage = Number(data?.pagination?.per_page || state.perPage) || state.perPage;
     if (!rows.length) {
       el.innerHTML = `<div class="products-empty">No orders yet.</div>`;
+      if (pagerEl && window.__Pager__?.render) {
+        window.__Pager__.render(pagerEl, {
+          page: state.page,
+          perPage: state.perPage,
+          total: state.total,
+          onPage: (p) => { state.page = Math.max(1, p); load(); },
+          onPerPage: (n) => { state.perPage = Math.max(1, Math.min(50, n)); state.page = 1; load(); },
+        });
+      }
       return;
     }
     el.innerHTML = rows.map(o => `
@@ -133,6 +166,16 @@ $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
         </div>
       </div>
     `).join('');
+
+    if (pagerEl && window.__Pager__?.render) {
+      window.__Pager__.render(pagerEl, {
+        page: state.page,
+        perPage: state.perPage,
+        total: state.total,
+        onPage: (p) => { state.page = Math.max(1, p); load(); },
+        onPerPage: (n) => { state.perPage = Math.max(1, Math.min(50, n)); state.page = 1; load(); },
+      });
+    }
   };
 
   const setStatus = async (orderId, status) => {
@@ -201,9 +244,16 @@ $ordersApi = ($app !== '' ? $app : '') . '/App/Controller/OrdersController.php';
 
   const setAuto = (on) => {
     if (timer) { clearInterval(timer); timer = null; }
-    if (on) timer = setInterval(load, 7000);
+    if (on) timer = setInterval(load, 12000);
   };
   document.getElementById('autoRefresh')?.addEventListener('change', (e) => setAuto(e.target.checked));
+
+  dateEl?.addEventListener('change', (e) => {
+    const v = String(e.target.value || '').trim();
+    state.date = v || todayStr();
+    state.page = 1;
+    load();
+  });
 
   load();
   setAuto(true);

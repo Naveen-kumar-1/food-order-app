@@ -348,12 +348,26 @@ if ($tableId > 0 && $token !== '') {
   const trackOrder = async () => {
     const box = $('trackBox');
     if (!box) return;
-    const res = await fetch(`${api}?action=tableOrders&table_id=${encodeURIComponent(tableId)}&token=${encodeURIComponent(token)}&limit=50`, { cache: 'no-store' });
+
+    const track = getTrackList();
+    const ids = track.map(x => Number(x.order_id)).filter(n => Number.isFinite(n) && n > 0);
+    if (!ids.length) {
+      box.innerHTML = `<div class="products-empty">No orders saved on this device (or they expired after 1 hour).</div>`;
+      return;
+    }
+
+    const fd = new FormData();
+    fd.set('action', 'trackOrders');
+    fd.set('table_id', String(tableId));
+    fd.set('token', token);
+    fd.set('order_ids', JSON.stringify(ids.slice(0, 100)));
+    const res = await fetch(api, { method: 'POST', body: fd, cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) { box.innerHTML = `<div class="products-empty">Could not load orders.</div>`; return; }
     const orders = data.orders || [];
     const itemsByOrder = data.itemsByOrder || {};
-    if (!orders.length) { box.innerHTML = `<div class="products-empty">No active orders for this table.</div>`; return; }
+    if (!orders.length) { box.innerHTML = `<div class="products-empty">Your saved orders expired (after 1 hour) or were not found.</div>`; return; }
+
     box.innerHTML = orders.map(o => {
       const status = String(o.status || 'Pending');
       const pill = status === 'Served' ? 'pill--green' : (status === 'Completed' ? 'pill--green' : (status === 'Preparing' ? 'pill--amber' : (status === 'Cancelled' ? 'pill--amber' : '')));

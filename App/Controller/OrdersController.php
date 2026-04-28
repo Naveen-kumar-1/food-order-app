@@ -191,10 +191,17 @@ if ($action === 'get') {
 
 // Customer: list all visible orders for a table (latest first)
 if ($action === 'tableOrders') {
-    $tableId = (int) ($_GET['table_id'] ?? 0);
-    $token = trim((string) ($_GET['token'] ?? ''));
-    $limit = (int) ($_GET['limit'] ?? 50);
-    $limit = max(1, min(200, $limit));
+    // This endpoint is privacy-breaking (it reveals other devices' orders for the same table).
+    // Use action=trackOrders instead, which requires explicit order IDs from the client.
+    $conn->close();
+    o_respond(['success' => false, 'message' => 'Deprecated. Use action=trackOrders'], 410);
+}
+
+// Customer: track only specific orders (privacy-safe; requires same table token)
+if ($action === 'trackOrders' && $method === 'POST') {
+    $tableId = (int) ($_POST['table_id'] ?? 0);
+    $token = o_post_str('token');
+    $idsRaw = (string) ($_POST['order_ids'] ?? '[]');
     if ($tableId <= 0 || $token === '') {
         $conn->close();
         o_respond(['success' => false, 'message' => 'Invalid table'], 422);
@@ -205,25 +212,38 @@ if ($action === 'tableOrders') {
         o_respond(['success' => false, 'message' => 'Invalid table'], 404);
     }
     $shopId = (int) $t['shop_id'];
-    $rows = Orders::listByTable($conn, $shopId, $tableId, $limit);
 
-    // Apply 1-hour visibility rule to Completed/Served
+    $decoded = json_decode($idsRaw, true);
+    $ids = [];
+    if (is_array($decoded)) {
+        foreach ($decoded as $v) {
+            $id = (int) $v;
+            if ($id > 0) $ids[] = $id;
+        }
+    }
+    $ids = array_values(array_unique($ids));
+    if (count($ids) === 0) {
+        $conn->close();
+        o_respond(['success' => true, 'orders' => [], 'itemsByOrder' => []]);
+    }
+
+    $rows = Orders::listByIdsForTable($conn, $shopId, $tableId, $ids);
+
+    // Customer visibility rule:
+    // Only show orders from the last 1 hour (by created_at), regardless of status.
+    $cutoff = time() - 3600;
     $visible = [];
     foreach ($rows as $o) {
-        $status = (string) ($o['status'] ?? '');
-        if ($status === 'Completed' || $status === 'Served') {
-            $updatedAt = (string) ($o['updated_at'] ?? $o['created_at'] ?? '');
-            $ts = $updatedAt ? strtotime($updatedAt) : 0;
-            if ($ts > 0 && (time() - $ts) > 3600) continue;
-        }
+        $createdAt = (string) ($o['created_at'] ?? '');
+        $ts = $createdAt ? strtotime($createdAt) : 0;
+        if ($ts > 0 && $ts < $cutoff) continue;
         $o['id'] = (int) $o['id'];
         $o['table_id'] = (int) $o['table_id'];
         $o['total_amount'] = (float) $o['total_amount'];
         $visible[] = $o;
     }
-
-    $ids = array_map(fn($r) => (int) $r['id'], $visible);
-    $itemsMap = Orders::itemsForOrders($conn, $ids);
+    $ids2 = array_map(fn($r) => (int) $r['id'], $visible);
+    $itemsMap = Orders::itemsForOrders($conn, $ids2);
     $conn->close();
     o_respond(['success' => true, 'orders' => $visible, 'itemsByOrder' => $itemsMap]);
 }
